@@ -1,7 +1,5 @@
 # Analyse temporelle et prédictive des risques routiers au Bénin
 
-Mémoire de master, Master Statistique appliquée aux vivants (CIPMA, Université d'Abomey-Calavi), soutenu le 2 août 2025.
-
 ## Contexte
 
 Les accidents de la route ont causé environ 1,19 million de décès dans le monde en 2021, soit 15 décès pour 100 000 habitants. Le Bénin en compte 25 pour 100 000 (OMS, 2023), et 5 272 blessés graves ont été recensés en 2021 (CNSR, 2022).
