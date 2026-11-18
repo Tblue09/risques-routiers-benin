@@ -1,0 +1,583 @@
+---
+title: "random_forest"
+output:
+  word_document: default
+  html_document: default
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(kableExtra)
+library(scales)
+library(gridExtra)
+library(ggcorrplot)
+library(zoo)
+library(randomForest)
+library(caret)
+library(rpart)
+library(mlbench)
+library(ranger)
+library(gbm)
+library(DiagrammeR)
+library(xgboost)
+library(Metrics)
+library(pROC)
+```
+
+```{r}
+base_accident <- read_excel("./data/DONNEE.xlsx")
+
+base_accident<- base_accident%>%
+  mutate(across(everything(), ~replace_na(.,0)))
+
+noms_colonnes <- c(
+  "Mois",
+  "RNIE",
+  "RN",
+  "VU",
+  "Piste_rep",
+  "Nb_accidents",
+  "Vh_10moins",
+  "Vh_11_20",
+  "Vh_21_30",
+  "Vh_30plus",
+  "Jour",
+  "Nuit_sans_ep",
+  "Nuit_ep_allume",
+  "Nuit_ep_eteint",
+  "Goud_bon",
+  "Goud_mauv",
+  "Paves",
+  "Chantier",
+  "Lat_bon",
+  "Lat_mauv",
+  "CT_oui",
+  "CT_non",
+  "Nb_vehicules",
+  "Assure_oui",
+  "Assure_non",
+  "accidentologie",
+  "legers",
+  "Deces",
+  "graves",
+  "Vh_bon_etat",
+  "Vh_mauv_etat",
+  "PL_seul",
+  "VL_seul",
+  "R2_seul",
+  "PL_PL",
+  "PL_VL",
+  "PL_R2",
+  "PL_Pieton",
+  "VL_VL",
+  "VL_R2",
+  "VL_Pieton",
+  "R2_R2",
+  "R2_Pieton"
+)
+colnames(base_accident) <- noms_colonnes
+
+openxlsx::write.xlsx(base_accident, "donnee.xlsx")
+
+
+```
+
+```{r echo=FALSE}
+str(base_accident)
+```
+
+#### Random forest pour la variable Morts########
+```{r}
+base_accident <- base_accident%>%
+  mutate(Mois=as.factor(Mois))
+
+base_train <- base_accident%>%
+  dplyr::slice(1:180)%>%
+  select(-c(accidentologie,legers, graves, Nb_accidents))
+
+base_test <- base_accident%>%
+  dplyr::slice(181:204)%>%
+  select(-c(accidentologie,legers, graves, Nb_accidents))
+```
+
+
+
+```{r}
+# Random Forest 
+set.seed(5432)
+foretm1 <- randomForest(Deces~.,data=base_train, importance = T, localImp=T)
+foretm1
+```
+
+
+```{r}
+plot(foretm1)
+```
+
+```{r}
+set.seed(123)
+# 3. Définir une grille de paramètres
+ntree_grid <- c(300, 500,1000)
+mtry_grid <- c(3,5,8,16)
+nodesize_grid <- c(3,5,8)
+
+# 4. Initialiser un tableau pour stocker les résultats (MSE out-of-bag)
+results <- data.frame(ntree = integer(), mtry = integer(), nodesize = integer(), MSE = numeric())
+
+# 5. Boucle sur les combinaisons
+for (ntree in ntree_grid) {
+  for (mtry in mtry_grid) {
+    for (nodesize in nodesize_grid) {
+      
+      model <- randomForest(
+        Deces ~ .,
+        data = base_train,
+        ntree = ntree,
+        mtry = mtry,
+        nodesize = nodesize
+      )
+      
+      mse <- tail(model$mse, 1)  # erreur out-of-bag
+      
+      results <- rbind(results, data.frame(
+        ntree = ntree, mtry = mtry, nodesize = nodesize, MSE = mse
+      ))
+    }
+  }
+}
+
+# 6. Résultat trié par MSE croissant
+results <- results[order(results$MSE), ]
+print(results)
+
+# 7. Meilleurs paramètres
+best <- results[1, ]
+cat("Meilleurs paramètres :\n")
+print(best)
+
+```
+```{r}
+ggplot(results, aes(x = mtry, y = nodesize, fill = MSE)) +
+  geom_tile() +
+  facet_wrap(~ntree) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "MSE pour chaque combinaison de paramètres")
+```
+
+```{r}
+set.seed(5432)
+foretm2 <- randomForest(Deces~.,data=base_train,mtry=best$mtry,nodesize=best$nodesize,ntree=best$ntree,importance = T)
+foretm2
+```
+
+
+
+```{r}
+plot(foretm2)
+```
+
+```{r}
+plot(foretm2$predicted, type = "l", col="red", lwd=2)
+lines(base_train$Deces)
+```
+
+
+```{r fig.width=12, fig.height=10}
+importance <- vip::vip(foretm2,num_features = 41,
+    horizontal  = T,
+    geom = "col" ,
+    aesthetics = list(fill = "darkorange", alpha = 0.8))
+print(importance)
+```
+```{r}
+foretm2$importance
+```
+
+
+```{r include=FALSE, echo=FALSE}
+prediction <- predict(foretm2, newdata = base_test)
+cbind(round(prediction),base_test$Deces)
+```
+
+```{r}
+r2 <- R2(base_test$Deces, prediction)
+rmse_val <- RMSE(base_test$Deces, prediction)
+mae_value <- mae(base_test$Deces, prediction)
+mape_value <- mape(base_test$Deces, prediction)
+```
+
+```{r}
+r2
+rmse_val
+mae_value
+mape_value
+```
+
+```{r}
+roc_curve <- roc(response = as.numeric(base_test$Deces > 95), predictor = prediction)  # Calcul de la courbe ROC
+
+# Affichage de la courbe ROC
+plot(roc_curve, main = "Courbe ROC")
+```
+
+```{r}
+# courbe ROC
+library(pROC)
+y_true <- ifelse(base_test$Deces > 95, 1, 0)
+y_true
+
+roc_obj <- roc(response = y_true, predictor = prediction)
+roc_obj
+
+auc_value <- auc(roc_obj)
+
+```
+
+# courbe roc du forêt
+```{r}
+
+# Data pour ggplot
+roc_data <- data.frame(
+  specificity = rev(roc_obj$specificities),
+  sensitivity = rev(roc_obj$sensitivities)
+)
+
+# Courbe ROC + AUC
+ggplot(roc_data, aes(x = specificity, y = sensitivity)) +
+  geom_line(color = "blue", linewidth = 1.2) +
+  geom_abline(slope = -1, intercept = 1, linetype = "dashed", color = "red") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  annotate("text", x = 0.6, y = 0.1, label = paste("AUC =", round(auc_value, 3)), size = 5, color = "black") +
+  labs(title = "Courbe ROC avec AUC", x = "Spécificité", y = "Sensibilité") +
+  theme_minimal()
+```
+
+```{r fig.width=12, fig.height=8}
+cor_mat <- cor(na.omit(base_accident%>%select(-Mois, -accidentologie)))
+ggcorrplot(cor_mat, tl.srt=90)
+```
+
+
+
+
+
+
+L’état des routes apparaît comme un facteur déterminant dans l’explication du nombre de décès liés aux accidents de la route. La variable correspondant aux routes en latérite en bon état présente une influence majeure, avec une importance relative de 6,04 %. Ce résultat, bien que surprenant à première vue, peut s’expliquer par la fausse impression de sécurité que procurent ces routes. En effet, dans le contexte béninois, les routes en latérite dites « en bon état » sont souvent empruntées à des vitesses élevées, notamment dans les zones rurales, alors qu’elles peuvent rapidement devenir glissantes ou instables, surtout en saison des pluies. Les routes pavées contribuent également de manière notable à la mortalité (2,62 %), probablement en raison de leur configuration urbaine, souvent étroite et mal partagée entre véhicules et piétons. Par ailleurs, les routes en chantier (2,42 %) et les routes en latérite en mauvais état (2,36 %) soulignent l’importance des infrastructures dégradées ou mal signalées, qui exposent les usagers à des risques d’accidents graves, en particulier les deux-roues très présents dans le parc automobile béninois.
+
+Les variables liées à la gravité des blessures jouent un rôle fondamental. Les blessés graves (5,94 %) et les blessés légers (4,90 %) sont fortement corrélés au nombre de décès, ce qui confirme l’impact direct de la violence des chocs. Cette relation invite à réfléchir à la qualité des services d’urgence et aux délais d’intervention après accident, notamment en zones périphériques où les structures hospitalières sont rares ou peu équipées pour gérer des traumatismes sévères. Une meilleure prise en charge des blessés pourrait réduire significativement la mortalité post-accident.
+
+Les caractéristiques des véhicules impliqués s’avèrent également déterminantes. Le nombre de véhicules en cause (5,54 %) reflète logiquement l’intensité des collisions. Plus un accident implique de véhicules, plus le risque de décès est élevé, du fait des multiples points d’impact et de la complexité des circonstances. Les types de collisions spécifiques renforcent cette lecture. Les accidents impliquant des poids lourds et des piétons (4,56 %), ainsi que des poids lourds et des deux-roues (4,44 %), comptent parmi les configurations les plus meurtrières. Cela peut s’expliquer par la forte vulnérabilité des piétons et motocyclistes face à des véhicules massifs circulant à grande vitesse sur des axes mal aménagés. Même les collisions entre poids lourds ou entre poids lourd et véhicule léger (3,65 %) contribuent sensiblement à la mortalité. De façon notable, les accidents impliquant un seul véhicule léger (3,39 %) ou un seul poids lourd (1,72 %) suggèrent que certains décès surviennent lors de sorties de route, de renversements ou de chocs avec des obstacles fixes, souvent en raison d’une perte de contrôle.
+
+Le facteur temporel, à travers les variables liées aux périodes du mois (entre 2,5 % et 3,5 %), traduit une variabilité des risques selon le moment. Certaines périodes comme le début ou la fin du mois, ou encore les périodes de fêtes et de salaires, pourraient concentrer des flux de circulation intenses, parfois accompagnés d’imprudence, de consommation d’alcool, ou d’un usage accru des moyens de transport, augmentant ainsi la probabilité de collisions mortelles.
+
+L’absence d’assurance ressort également comme un indicateur alarmant. Les accidents impliquant des véhicules non assurés contribuent à hauteur de 2,93 % à l’explication des décès, ce qui témoigne d’un phénomène préoccupant. Ces véhicules, souvent anciens ou mal entretenus, sont fréquemment conduits par des individus sans formation adéquate, avec un certain relâchement dans le respect du code de la route, du fait de la faible probabilité de poursuites judiciaires. Le même constat s’applique aux véhicules ne disposant pas de contrôle technique valide (3,19 %), révélant le danger potentiel d’un parc automobile vétuste et insuffisamment surveillé.
+
+Les catégories vulnérables sont également touchées de manière significative. La présence d’enfants parmi les passagers (2,85 %), les spectateurs (2,23 %) ou les piétons (2,14 %) indique que les décès concernent aussi ceux qui n’étaient pas nécessairement au cœur de l’action, mais victimes de l’environnement immédiat. Ce résultat invite à réfléchir à l’éducation routière, à la sécurisation des abords d’école, ainsi qu’à la protection des enfants dans les véhicules (absence de ceintures ou sièges adaptés).
+
+Le type de voie empruntée influence aussi la létalité des accidents. Les pistes rurales (1,76 %) et les routes nationales (4,59 %), voire les routes inter-États (1,30 %), apparaissent comme des lieux critiques. Ces axes, parfois peu surveillés et mal balisés, offrent des conditions de circulation favorables à la vitesse, sans les dispositifs de sécurité nécessaires pour prévenir ou atténuer les accidents.
+
+Enfin, des variables comme le nombre d’accidents (1,08 %) et l’état des véhicules impliqués (1,41 % pour mauvais état, 1,03 % pour bon état) révèlent un lien structurel avec la mortalité. Même les véhicules jugés en bon état peuvent être impliqués dans des décès, soulignant que l’aspect mécanique ne suffit pas : la conduite, le contexte et les conditions routières jouent aussi un rôle essentiel.
+
+
+
+```{r}
+
+# Data pour ggplot
+roc_data <- data.frame(
+  specificity = rev(roc_obj$specificities),
+  sensitivity = rev(roc_obj$sensitivities)
+)
+
+# Courbe ROC + AUC
+ggplot(roc_data, aes(x = specificity, y = sensitivity)) +
+  geom_line(color = "blue", size = 1.2) +
+  geom_abline(slope = -1, intercept = 1, linetype = "dashed", color = "red") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  annotate("text", x = 0.6, y = 0.1, label = paste("AUC =", round(auc_value, 3)), size = 5, color = "black") +
+  labs(title = "Courbe ROC avec AUC", x = "Spécificité", y = "Sensibilité") +
+  theme_minimal()
+```
+
+
+#### Random forest pour la variable Graves########
+
+
+```{r}
+base_accident <- base_accident%>%
+  mutate(Mois=as.factor(Mois))
+
+base_train <- base_accident%>%
+  dplyr::slice(1:180)%>%
+  select(-c(accidentologie,legers, Deces, Nb_accidents))
+
+base_test <- base_accident%>%
+  dplyr::slice(181:204)%>%
+  select(-c(accidentologie,legers, Deces, Nb_accidents))
+```
+
+
+
+
+
+
+```{r}
+# Random Forest 
+set.seed(5432)
+foretm3 <- randomForest(graves~.,data=base_train, importance = T, localImp=T)
+summary(foretm3)
+```
+
+
+```{r}
+plot(foretm3)
+```
+
+```{r}
+set.seed(123)
+# 3. Définir une grille de paramètres
+ntree_grid <- c(300,500,1000)
+mtry_grid <- c(3,5,8,16)
+nodesize_grid <- c(3,5,8,12)
+
+# 4. Initialiser un tableau pour stocker les résultats
+results <- data.frame(ntree = integer(), mtry = integer(), nodesize = integer(), MSE = numeric())
+
+# 5. Boucle sur les combinaisons
+for (ntree in ntree_grid) {
+  for (mtry in mtry_grid) {
+    for (nodesize in nodesize_grid) {
+      
+      model <- randomForest(
+        graves ~ .,
+        data = base_train,
+        ntree = ntree,
+        mtry = mtry,
+        nodesize = nodesize
+      )
+      
+      mse <- tail(model$mse, 1)  # erreur out-of-bag
+      
+      results <- rbind(results, data.frame(
+        ntree = ntree, mtry = mtry, nodesize = nodesize, MSE = mse
+      ))
+    }
+  }
+}
+
+# 6. Résultat trié par MSE croissant
+results_graves <- results[order(results$MSE), ]
+print(results_graves)
+
+# 7. Meilleurs paramètres
+best <- results_graves[1, ]
+cat("Meilleurs paramètres :\n")
+print(best)
+
+```
+```{r}
+ggplot(results_graves, aes(x = mtry, y = nodesize, fill = MSE)) +
+  geom_tile() +
+  facet_wrap(~ntree) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "MSE pour chaque combinaison de paramètres")
+```
+
+```{r}
+set.seed(5432)
+foretm4 <- randomForest(graves~.,data=base_train,mtry=best$mtry,nodesize=best$nodesize,ntree=best$ntree,importance = T)
+foretm4
+```
+
+
+
+```{r}
+plot(foretm4)
+```
+
+```{r}
+plot(foretm3$predicted, type = "l", col="red", lwd=2)
+lines(base_train$graves)
+plot(foretm4$predicted, type = "l", col="red", lwd=2)
+lines(base_train$graves)
+```
+
+
+```{r fig.width=12, fig.height=10}
+importance <- vip::vip(foretm4,num_features = 41,
+    horizontal  = T,
+    geom = "col" ,
+    aesthetics = list(fill = "darkorange", alpha = 0.8))
+print(importance)
+```
+
+```{r}
+foretm4$importance
+```
+
+
+```{r include=FALSE, echo=FALSE}
+prediction <- predict(foretm4, newdata = base_test)
+cbind(round(prediction),base_test$graves)
+mean((prediction-base_test$graves)^2)
+```
+
+```{r}
+r2 <- R2(base_test$graves, prediction)
+rmse_val <- RMSE(base_test$graves, prediction)
+mae_value <- mae(base_test$graves, prediction)
+mape_value <- mape(base_test$graves, prediction)
+```
+
+```{r}
+r2
+rmse_val
+mae_value
+mape_value
+```
+
+
+
+#### Random forest pour la variable accidentologie########
+
+
+```{r}
+base_accident <- base_accident%>%
+  mutate(Mois=as.factor(Mois))
+
+base_train <- base_accident%>%
+  dplyr::slice(1:180)%>%
+  select(-c(graves,legers, Deces, Nb_accidents))
+
+base_test <- base_accident%>%
+  dplyr::slice(181:204)%>%
+  select(-c(graves,legers, Deces, Nb_accidents))
+```
+
+
+
+
+
+
+```{r}
+# Random Forest 
+set.seed(5432)
+foretm5 <- randomForest(accidentologie~.,data=base_train, importance = T, localImp=T)
+(foretm5)
+```
+
+
+```{r}
+plot(foretm5)
+```
+
+```{r}
+set.seed(123)
+# 3. Définir une grille de paramètres
+ntree_grid <- c(300,500,1000)
+mtry_grid <- c(3,5,8,16)
+nodesize_grid <- c(3,5,8,12)
+
+# 4. Initialiser un tableau pour stocker les résultats
+results <- data.frame(ntree = integer(), mtry = integer(), nodesize = integer(), MSE = numeric())
+
+# 5. Boucle sur les combinaisons
+for (ntree in ntree_grid) {
+  for (mtry in mtry_grid) {
+    for (nodesize in nodesize_grid) {
+      
+      model <- randomForest(
+        accidentologie ~ .,
+        data = base_train,
+        ntree = ntree,
+        mtry = mtry,
+        nodesize = nodesize
+      )
+      
+      mse <- tail(model$mse, 1)  # erreur out-of-bag
+      
+      results <- rbind(results, data.frame(
+        ntree = ntree, mtry = mtry, nodesize = nodesize, MSE = mse
+      ))
+    }
+  }
+}
+
+# 6. Résultat trié par MSE croissant
+results_accidentologie <- results[order(results$MSE), ]
+print(results_accidentologie)
+
+# 7. Meilleurs paramètres
+best <- results_accidentologie[1, ]
+cat("Meilleurs paramètres :\n")
+print(best)
+
+```
+
+
+```{r}
+ggplot(results_accidentologie, aes(x = mtry, y = nodesize, fill = MSE)) +
+  geom_tile() +
+  facet_wrap(~ntree) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "MSE pour chaque combinaison de paramètres")
+```
+
+```{r}
+set.seed(5432)
+foretm6 <- randomForest(accidentologie~.,data=base_train,mtry=best$mtry,nodesize=best$nodesize,ntree=best$ntree,importance = T)
+foretm6
+```
+
+
+
+```{r}
+plot(foretm6)
+```
+
+
+
+```{r fig.width=12, fig.height=10}
+importance <- vip::vip(foretm6,num_features = 41,
+    horizontal  = T,
+    geom = "col" ,
+    aesthetics = list(fill = "darkorange", alpha = 0.8))
+print(importance)
+```
+
+```{r}
+foretm6$importance
+```
+
+
+```{r include=FALSE, echo=FALSE}
+prediction <- predict(foretm6, newdata = base_test)
+cbind(round(prediction),base_test$accidentologie)
+sqrt(mean((prediction-base_test$accidentologie)^2))
+```
+
+
+```{r}
+r2 <- R2(base_test$accidentologie, prediction)
+rmse_val <- RMSE(base_test$accidentologie, prediction)
+mae_value <- mae(base_test$accidentologie, prediction)
+mape_value <- mape(base_test$accidentologie, prediction)
+```
+
+```{r}
+r2
+rmse_val
+mae_value
+mape_value
+```

@@ -1,0 +1,394 @@
+---
+title: "Modèles GLARMA : décès, blessés graves et accidentologie"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning=FALSE, message=FALSE}
+library(readxl)
+library(glarma)
+library(tidyverse)
+```
+
+
+```{r}
+base_1 <- read_excel("./donnee.xlsx")
+base_1$Mois <- as.factor(base_1$Mois)
+```
+
+#Deces
+
+
+
+```{r message=FALSE, warning=FALSE}
+
+base <- base_1%>%dplyr::select(-c(accidentologie,legers, graves,Deces))
+
+y <- base_1$Deces
+
+variables <- names(base)
+
+
+
+make_X <- function(vars, data) {
+  if (length(vars) == 0) {
+    return(matrix(1, nrow = nrow(data), ncol = 1))
+  } else {
+    return(model.matrix(as.formula(paste("~", paste(vars, collapse = "+"))), data = data))
+  }
+}
+
+# Modèle initial avec toutes les variables
+current_vars <- variables
+X <- make_X(current_vars, base)
+
+mod <- glarma(y = y, X = X, type = "NegBin", thetaLags  = c(13))
+best_aic <- mod$aic
+cat("AIC initial :", best_aic, "\n")
+
+# Boucle backward stepwise
+improve <- TRUE
+
+while (improve && length(current_vars) > 0) {
+  aics <- c()
+  models <- list()
+  
+  for (var in current_vars) {
+    temp_vars <- setdiff(current_vars, var)
+    X_temp <- make_X(temp_vars, base)
+    
+    fit <- tryCatch({
+      glarma(y = y, X = X_temp, type = "NegBin", thetaLags  = c(13) )
+    }, error = function(e) NULL)
+    
+    if (!is.null(fit)) {
+      aics <- c(aics, fit$aic)
+      models[[var]] <- fit
+    } else {
+      aics <- c(aics, Inf)
+    }
+  }
+  
+  min_aic <- min(aics)
+  best_idx <- which.min(aics)
+  
+  if (min_aic < best_aic) {
+    best_aic <- min_aic
+    var_to_remove <- current_vars[best_idx]
+    current_vars <- setdiff(current_vars, var_to_remove)
+    cat("Removed:", var_to_remove, "| New AIC:", best_aic, "\n")
+  } else {
+    improve <- FALSE
+  }
+}
+
+cat("\n✅ Variables finales :", paste(current_vars, collapse = ", "), "\n")
+
+
+```
+
+
+```{r}
+# Modèle final
+
+h <- c("VU","Goud_bon","Lat_bon","Vh_bon_etat", "PL_VL", "PL_R2", "PL_Pieton",  "VL_R2", "VL_Pieton", "R2_R2","Nb_vehicules")
+
+h_1 <- c("VU","Goud_bon","Lat_bon","Vh_bon_etat", "PL_VL", "PL_R2", "PL_Pieton",  "VL_R2", "VL_Pieton", "R2_R2")
+# h <- c("RN","Vh_21_30","Goud_bon","Jour","Lat_bon","CT_non","Assure_non", "PL_seul", "PL_R2", "PL_Pieton",  "VL_R2", "VL_Pieton")
+
+X = make_X(h_1,base)
+X_final <- make_X(h_1, base)
+```
+
+
+```{r}
+mod_deces_1 <- glarma(y = y, X = X_final, type = "NegBin",offset = log(base$Nb_accidents), thetaLags  = c(13))
+summary(mod_deces_1)
+```
+
+
+
+```{r}
+mod_final_deces <- glarma(y = y, X = X_final, type = "NegBin",offset = log(base$Nb_accidents), thetaLags  = c(13))
+summary(mod_final_deces)
+```
+### Diagnostics modele DECES
+
+
+
+```{r}
+likeTests(mod_final_deces)
+plot.glarma(mod_final_deces)
+```
+
+
+```{r}
+model_glm <- MASS::glm.nb(y~X_final)
+x <- step(model_glm, direction = "both")
+summary(x)
+acf(residuals(model_glm))
+pacf(residuals(model_glm))
+
+exp(x$coefficients)
+
+```
+
+```{r}
+performance::check_overdispersion(model_glm)
+```
+
+```{r}
+resi_model <- residuals(model_glm)
+acf(resi_model)
+pacf(resi_model)
+```
+
+## GRAVES
+
+
+```{r}
+library(MASS)
+base_graves <- base%>%mutate(graves=base_1$graves)%>%dplyr::select(-c(Nb_accidents,Mois,PL_seul,R2_seul, VL_seul,VL_VL))
+glm_graves <- glm.nb(graves~., data = base_graves)
+```
+
+```{r}
+glm_graves_2 <- step(glm_graves, trace = F)
+summary(glm_graves_2)
+```
+
+```{r}
+acf(residuals(glm_graves_2))
+```
+
+```{r}
+pacf(residuals(glm_graves_2))
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+base <- base_1%>%dplyr::select(-c(accidentologie,legers, graves,Deces))
+
+y <- base_1$graves
+
+variables <- names(base)
+
+
+
+make_X <- function(vars, data) {
+  if (length(vars) == 0) {
+    return(matrix(1, nrow = nrow(data), ncol = 1))
+  } else {
+    return(model.matrix(as.formula(paste("~", paste(vars, collapse = "+"))), data = data))
+  }
+}
+
+# Modèle initial avec toutes les variables
+current_vars <- variables
+X <- make_X(current_vars, base)
+
+mod <- glarma(y = y, X = X, type = "NegBin", thetaLags = c(4,5,9),phiLags = NULL)
+best_aic <- mod$aic
+cat("AIC initial :", best_aic, "\n")
+
+
+## Boucle backward stepwise
+
+improve <- TRUE
+
+while (improve && length(current_vars) > 0) {
+  aics <- c()
+  models <- list()
+  
+  for (var in current_vars) {
+    temp_vars <- setdiff(current_vars, var)
+    X_temp <- make_X(temp_vars, base)
+    
+    fit <- tryCatch({
+      glarma(y = y, X = X_temp, type = "NegBin", thetaLags = c(4,5,9))
+    }, error = function(e) NULL)
+    
+    if (!is.null(fit)) {
+      aics <- c(aics, fit$aic)
+      models[[var]] <- fit
+    } else {
+      aics <- c(aics, Inf)
+    }
+  }
+  
+  min_aic <- min(aics)
+  best_idx <- which.min(aics)
+  
+  if (min_aic < best_aic) {
+    best_aic <- min_aic
+    var_to_remove <- current_vars[best_idx]
+    current_vars <- setdiff(current_vars, var_to_remove)
+    cat("Removed:", var_to_remove, "| New AIC:", best_aic, "\n")
+  } else {
+    improve <- FALSE
+  }
+}
+
+cat("\n✅ Variables finales :", paste(current_vars, collapse = ", "), "\n")
+
+
+```
+
+```{r}
+glarma_graves_2 <- glarma(y=y,X=make_X(current_vars, base), type="NegBin", thetaLags = c(4,5,9), phiLags = NULL)
+summary(glarma_graves_2)
+```
+
+
+
+```{r}
+# Modèle final
+
+h <- c("Vh_11_20", "Nuit_ep_eteint", "Nuit_ep_allume", "Lat_bon", "Nb_vehicules","Vh_bon_etat", "VL_Pieton","VU")
+
+h_1 <- c("","Assure_oui","Vh_bon_etat","VL_Pieton","VL_R2","Nb_vehicules","Vh_11_20","Nuit_ep_eteint","Lat_bon", "Goud_bon")
+
+X = make_X(h,base)
+X_final <- make_X(h_1, base)
+mod_final_graves <- glarma(y = y, X = X, type = "NegBin", thetaLags  = c(5))
+summary(mod_final_graves)
+```
+
+
+
+
+```{r}
+likeTests(mod_final_graves)
+plot.glarma(mod_final_graves)
+```
+
+
+
+## ACCIDENTOLOGIE
+
+
+```{r}
+base_accidentologie <- base%>%mutate(accidentologie=base_1$accidentologie)%>%dplyr::select(-c(Nb_accidents,Mois))
+
+glm_accidentologie <- glm.nb(accidentologie~., data = base_accidentologie)
+```
+
+```{r}
+summary(glm_accidentologie)
+```
+
+```{r}
+glm_accid_2 <- step(glm_accidentologie, trace = F)
+summary(glm_accid_2)
+```
+
+```{r}
+acf(residuals(glm_accid_2))
+```
+
+```{r}
+pacf(residuals(glm_accid_2))
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+base <- base_1%>%dplyr::select(-c(accidentologie,legers, graves,Deces,Nb_accidents,Mois))
+
+y <- base_1$accidentologie
+
+variables <- names(base)
+
+
+
+make_X <- function(vars, data) {
+  if (length(vars) == 0) {
+    return(matrix(1, nrow = nrow(data), ncol = 1))
+  } else {
+    return(model.matrix(as.formula(paste("~", paste(vars, collapse = "+"))), data = data))
+  }
+}
+
+# Modèle initial avec toutes les variables
+current_vars <- variables
+X <- make_X(current_vars, base)
+
+mod <- glarma(y = y, X = X, type = "NegBin", thetaLags = c(8))
+best_aic <- mod$aic
+cat("AIC initial :", best_aic, "\n")
+
+# Boucle backward stepwise
+improve <- TRUE
+
+while (improve && length(current_vars) > 0) {
+  aics <- c()
+  models <- list()
+  
+  for (var in current_vars) {
+    temp_vars <- setdiff(current_vars, var)
+    X_temp <- make_X(temp_vars, base)
+    
+    fit <- tryCatch({
+      glarma(y = y, X = X_temp, type = "NegBin", thetaLags = 8)
+    }, error = function(e) NULL)
+    
+    if (!is.null(fit)) {
+      aics <- c(aics, fit$aic)
+      models[[var]] <- fit
+    } else {
+      aics <- c(aics, Inf)
+    }
+  }
+  
+  min_aic <- min(aics)
+  best_idx <- which.min(aics)
+  
+  if (min_aic < best_aic) {
+    best_aic <- min_aic
+    var_to_remove <- current_vars[best_idx]
+    current_vars <- setdiff(current_vars, var_to_remove)
+    cat("Removed:", var_to_remove, "| New AIC:", best_aic, "\n")
+  } else {
+    improve <- FALSE
+  }
+}
+
+cat("\n✅ Variables finales :", paste(current_vars, collapse = ", "), "\n")
+
+
+```
+```{r}
+glarma_accident <- glarma(y=y,X=make_X(current_vars, base), type="NegBin", thetaLags = 8,phiLags = 1)
+summary(glarma_accident)
+```
+
+
+
+```{r}
+# Modèle final
+
+h <- c("RNIE", "VU", "Piste_rep", "Vh_11_20", "Vh_21_30", "Nuit_ep_eteint", 
+"Goud_bon", "Goud_mauv", "Paves", "Chantier", "Lat_bon", "Lat_mauv", 
+"CT_oui", "Assure_oui", "Assure_non", "Vh_bon_etat", "Vh_mauv_etat", "PL_R2", "VL_Pieton","PL_VL")
+
+
+
+X = make_X(h,base)
+mod_final_accid <- glarma(y = y, X = X, type = "NegBin", thetaLags  = 8)
+summary(mod_final_accid)
+```
+
+
+
+```{r}
+likeTests(mod_final_accid)
+plot.glarma(mod_final_accid)
+```
+
+
+
