@@ -94,8 +94,6 @@ Avec l'offset, exp(β₀) ≈ 0,20 est un taux : en situation de référence, on
 | `xgboost_script.Rmd` | XGBoost pour les mêmes cibles |
 | `script_glarma.Rmd` | modèles GLARMA et diagnostics |
 
-`randFor_script.Rmd` lit `data/DONNEE.xlsx` et crée le fichier `donnee.xlsx` utilisé par les deux autres scripts : il faut donc l'exécuter en premier.
-
 ## Packages
 
 ```r
